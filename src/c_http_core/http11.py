@@ -43,12 +43,29 @@ class HTTP11Connection:
     keep-alive support.
     """
     
-    def __init__(self, stream: NetworkStream):
+    # Default configuration
+    DEFAULT_READ_TIMEOUT = 30.0  # 30 seconds
+    DEFAULT_WRITE_TIMEOUT = 30.0  # 30 seconds
+    DEFAULT_KEEP_ALIVE_TIMEOUT = 300.0  # 5 minutes
+    DEFAULT_MAX_REQUESTS = 100  # Maximum requests per connection
+    
+    def __init__(
+        self, 
+        stream: NetworkStream,
+        read_timeout: Optional[float] = None,
+        write_timeout: Optional[float] = None,
+        keep_alive_timeout: Optional[float] = None,
+        max_requests: Optional[int] = None,
+    ):
         """
         Initialize HTTP/1.1 connection.
         
         Args:
             stream: The NetworkStream to use for communication
+            read_timeout: Timeout for read operations in seconds
+            write_timeout: Timeout for write operations in seconds
+            keep_alive_timeout: Timeout for keep-alive connections in seconds
+            max_requests: Maximum number of requests per connection
         """
         self._stream = stream
         self._h11_connection = h11.Connection(h11.CLIENT)
@@ -56,19 +73,33 @@ class HTTP11Connection:
         self._state_lock = asyncio.Lock()
         self._idle_since: Optional[float] = None
         
+        # Configuration
+        self._read_timeout = read_timeout or self.DEFAULT_READ_TIMEOUT
+        self._write_timeout = write_timeout or self.DEFAULT_WRITE_TIMEOUT
+        self._keep_alive_timeout = keep_alive_timeout or self.DEFAULT_KEEP_ALIVE_TIMEOUT
+        self._max_requests = max_requests or self.DEFAULT_MAX_REQUESTS
+        
         # Metrics
         self._request_count = 0
         self._bytes_sent = 0
         self._bytes_received = 0
+        self._total_request_time = 0.0
+        self._errors_count = 0
+        self._last_request_time: Optional[float] = None
         
         logger.debug("HTTP/1.1 connection initialized")
     
-    async def handle_request(self, request: Request) -> Response:
+    async def handle_request(
+        self, 
+        request: Request, 
+        timeout: Optional[float] = None
+    ) -> Response:
         """
         Handle a complete HTTP request/response cycle.
         
         Args:
             request: The HTTP request to send
+            timeout: Optional timeout override for this request
             
         Returns:
             The HTTP response received
@@ -76,21 +107,30 @@ class HTTP11Connection:
         Raises:
             ConnectionError: If connection is not available
             ProtocolError: If HTTP protocol error occurs
+            asyncio.TimeoutError: If request times out
         """
         start_time = time.time()
         self._request_count += 1
+        self._last_request_time = start_time
+        
+        # Check if connection has exceeded max requests
+        if self._request_count > self._max_requests:
+            await self.close()
+            raise ConnectionError(f"Connection exceeded max requests ({self._max_requests})")
         
         try:
             # Acquire connection
             await self._acquire_connection()
             
             # Send request
-            await self._send_request(request)
+            await self._send_request(request, timeout)
             
             # Receive response
-            response = await self._receive_response()
+            response = await self._receive_response(timeout)
             
             duration = time.time() - start_time
+            self._total_request_time += duration
+            
             logger.debug(
                 f"Request {self._request_count}: {request.method} {request.path} "
                 f"-> {response.status_code} ({duration:.3f}s)"
@@ -98,8 +138,21 @@ class HTTP11Connection:
             
             return response
             
+        except asyncio.TimeoutError:
+            duration = time.time() - start_time
+            self._errors_count += 1
+            logger.error(
+                f"Request {self._request_count} timed out after {duration:.3f}s"
+            )
+            # Mark connection as closed on timeout
+            async with self._state_lock:
+                self._state = ConnectionState.CLOSED
+            await self._stream.aclose()
+            raise
+            
         except Exception as e:
             duration = time.time() - start_time
+            self._errors_count += 1
             logger.error(
                 f"Request {self._request_count} failed: {e} ({duration:.3f}s)"
             )
@@ -109,13 +162,16 @@ class HTTP11Connection:
             await self._stream.aclose()
             raise
     
-    async def _send_request(self, request: Request) -> None:
+    async def _send_request(self, request: Request, timeout: Optional[float] = None) -> None:
         """
         Send HTTP request using h11.
         
         Args:
             request: The request to send
+            timeout: Optional timeout override
         """
+        write_timeout = timeout or self._write_timeout
+        
         # Create h11 Request event
         h11_request = h11.Request(
             method=request.method,
@@ -124,16 +180,25 @@ class HTTP11Connection:
         )
         
         # Send request headers
-        await self._send_event(h11_request)
+        await asyncio.wait_for(
+            self._send_event(h11_request),
+            timeout=write_timeout
+        )
         
         # Send request body if present
         if request.stream:
             async for chunk in request.stream:
                 h11_data = h11.Data(data=chunk)
-                await self._send_event(h11_data)
+                await asyncio.wait_for(
+                    self._send_event(h11_data),
+                    timeout=write_timeout
+                )
         
         # Send end of message
-        await self._send_event(h11.EndOfMessage())
+        await asyncio.wait_for(
+            self._send_event(h11.EndOfMessage()),
+            timeout=write_timeout
+        )
     
     async def _send_event(self, event: h11.Event) -> None:
         """
@@ -147,19 +212,27 @@ class HTTP11Connection:
             await self._stream.write(data)
             self._bytes_sent += len(data)
     
-    async def _receive_response(self) -> Response:
+    async def _receive_response(self, timeout: Optional[float] = None) -> Response:
         """
         Receive HTTP response using h11.
         
+        Args:
+            timeout: Optional timeout override
+            
         Returns:
             The HTTP response with streaming body
         """
+        read_timeout = timeout or self._read_timeout
+        
         # Read response headers
         while True:
             event = self._h11_connection.next_event()
             
             if event is h11.NEED_DATA:
-                data = await self._stream.read(65536)  # 64KB chunks
+                data = await asyncio.wait_for(
+                    self._stream.read(65536),  # 64KB chunks
+                    timeout=read_timeout
+                )
                 if not data:
                     raise ProtocolError("Connection closed unexpectedly")
                 self._h11_connection.receive_data(data)
@@ -183,18 +256,26 @@ class HTTP11Connection:
             if isinstance(event, h11.ConnectionClosed):
                 raise ProtocolError("Connection closed by server")
     
-    async def _receive_body_chunk(self) -> Optional[bytes]:
+    async def _receive_body_chunk(self, timeout: Optional[float] = None) -> Optional[bytes]:
         """
         Receive a chunk of response body.
         
+        Args:
+            timeout: Optional timeout override
+            
         Returns:
             Chunk of data or None if end of body
         """
+        read_timeout = timeout or self._read_timeout
+        
         while True:
             event = self._h11_connection.next_event()
             
             if event is h11.NEED_DATA:
-                data = await self._stream.read(65536)
+                data = await asyncio.wait_for(
+                    self._stream.read(65536),
+                    timeout=read_timeout
+                )
                 if not data:
                     raise ProtocolError("Connection closed unexpectedly")
                 self._h11_connection.receive_data(data)
@@ -318,12 +399,12 @@ class HTTP11Connection:
         """Check if connection is idle and available for reuse."""
         return self._state == ConnectionState.IDLE
     
-    def has_expired(self, timeout: float) -> bool:
+    def has_expired(self, timeout: Optional[float] = None) -> bool:
         """
         Check if idle connection has expired.
         
         Args:
-            timeout: Idle timeout in seconds
+            timeout: Idle timeout in seconds (uses keep_alive_timeout if None)
             
         Returns:
             True if connection has expired
@@ -331,4 +412,41 @@ class HTTP11Connection:
         if self._state != ConnectionState.IDLE or self._idle_since is None:
             return False
         
-        return (asyncio.get_event_loop().time() - self._idle_since) > timeout 
+        check_timeout = timeout or self._keep_alive_timeout
+        return (asyncio.get_event_loop().time() - self._idle_since) > check_timeout
+    
+    @property
+    def metrics(self) -> Dict[str, Any]:
+        """
+        Get connection metrics.
+        
+        Returns:
+            Dictionary with connection metrics
+        """
+        return {
+            "request_count": self._request_count,
+            "bytes_sent": self._bytes_sent,
+            "bytes_received": self._bytes_received,
+            "total_request_time": self._total_request_time,
+            "errors_count": self._errors_count,
+            "last_request_time": self._last_request_time,
+            "average_request_time": (
+                self._total_request_time / self._request_count 
+                if self._request_count > 0 else 0.0
+            ),
+            "error_rate": (
+                self._errors_count / self._request_count 
+                if self._request_count > 0 else 0.0
+            ),
+            "state": self._state.value,
+            "idle_since": self._idle_since,
+        }
+    
+    def reset_metrics(self) -> None:
+        """Reset connection metrics."""
+        self._request_count = 0
+        self._bytes_sent = 0
+        self._bytes_received = 0
+        self._total_request_time = 0.0
+        self._errors_count = 0
+        self._last_request_time = None 
