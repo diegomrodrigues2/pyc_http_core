@@ -137,6 +137,12 @@ def main():
                 "pytest-cov>=4.0.0",
                 "Cython>=3.0",
             ],
+            "test": [
+                "pytest>=7.0.0",
+                "pytest-asyncio>=0.21.0",
+                "pytest-cov>=4.0.0",
+                "pytest-benchmark>=4.0.0",
+            ],
             "docs": [
                 "sphinx>=4.0.0",
                 "sphinx-rtd-theme>=1.0.0",

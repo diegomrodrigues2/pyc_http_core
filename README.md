@@ -35,6 +35,18 @@ pip install -e .
 
 # Install development dependencies
 pip install -e ".[dev]"
+# Install test dependencies
+pip install -e ".[test]"
+
+# Build the epoll extension (Linux only)
+python setup.py build_ext --inplace
+
+```
+
+After building, you can run the epoll-specific tests:
+
+```bash
+pytest -m epoll
 ```
 
 ## Quick Start
