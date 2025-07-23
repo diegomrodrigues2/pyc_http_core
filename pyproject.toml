@@ -62,3 +62,6 @@ addopts = [
     "--strict-markers",
     "--strict-config"
 ]
+markers = [
+    "asyncio: mark test as async"
+]
