@@ -8,13 +8,14 @@ HTTP/1.1 protocol communication over a NetworkStream.
 import asyncio
 import logging
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, AsyncIterable
 from enum import Enum
 
 import h11
 
 from .http_primitives import Request, Response
 from .streams import ResponseStream
+from .streams import create_request_stream, read_stream_to_bytes
 from .network.stream import NetworkStream
 from .exceptions import (
     HTTPCoreError,
@@ -117,25 +118,40 @@ class HTTP11Connection:
         if self._request_count > self._max_requests:
             await self.close()
             raise ConnectionError(f"Connection exceeded max requests ({self._max_requests})")
-        
+
         try:
             # Acquire connection
             await self._acquire_connection()
-            
+
+            # Ensure Content-Length for request bodies
+            if request.stream is not None and not any(name.lower() == b"content-length" for name, _ in request.headers):
+                body_bytes = await read_stream_to_bytes(request.stream)
+                request = request.with_stream(create_request_stream(body_bytes))
+                request = request.add_header(b"Content-Length", str(len(body_bytes)).encode())
+
             # Send request
             await self._send_request(request, timeout)
             
             # Receive response
             response = await self._receive_response(timeout)
-            
+
+            # Eagerly read the entire body so the connection can be reused.
+            body = await response.stream.aread()
+            memory_stream = create_request_stream(body)
+            response = Response.create(
+                status_code=response.status_code,
+                headers=response.headers,
+                stream=memory_stream,
+            )
+
             duration = time.time() - start_time
             self._total_request_time += duration
-            
+
             logger.debug(
                 f"Request {self._request_count}: {request.method} {request.path} "
                 f"-> {response.status_code} ({duration:.3f}s)"
             )
-            
+
             return response
             
         except asyncio.TimeoutError:
@@ -249,47 +265,44 @@ class HTTP11Connection:
                 
                 return Response.create(
                     status_code=event.status_code,
-                    headers=event.headers,
-                    stream=response_stream
+                    headers=list(event.headers),
+                    stream=response_stream,
                 )
                 
             if isinstance(event, h11.ConnectionClosed):
                 raise ProtocolError("Connection closed by server")
     
-    async def _receive_body_chunk(self, timeout: Optional[float] = None) -> Optional[bytes]:
-        """
-        Receive a chunk of response body.
-        
-        Args:
-            timeout: Optional timeout override
-            
-        Returns:
-            Chunk of data or None if end of body
-        """
-        read_timeout = timeout or self._read_timeout
-        
-        while True:
-            event = self._h11_connection.next_event()
-            
-            if event is h11.NEED_DATA:
-                data = await asyncio.wait_for(
-                    self._stream.read(65536),
-                    timeout=read_timeout
-                )
-                if not data:
-                    raise ProtocolError("Connection closed unexpectedly")
-                self._h11_connection.receive_data(data)
-                self._bytes_received += len(data)
-                continue
-                
-            if isinstance(event, h11.Data):
-                return event.data
-                
-            if isinstance(event, h11.EndOfMessage):
-                return None
-                
-            if isinstance(event, h11.ConnectionClosed):
-                raise ProtocolError("Connection closed by server")
+    async def _receive_body_chunk(self, timeout: Optional[float] = None) -> AsyncIterable[bytes]:
+        """Yield body chunks from the response."""
+
+        async def _iter_body() -> AsyncIterable[bytes]:
+            read_timeout = timeout or self._read_timeout
+
+            while True:
+                event = self._h11_connection.next_event()
+
+                if event is h11.NEED_DATA:
+                    data = await asyncio.wait_for(
+                        self._stream.read(65536),
+                        timeout=read_timeout
+                    )
+                    if not data:
+                        raise ProtocolError("Connection closed unexpectedly")
+                    self._h11_connection.receive_data(data)
+                    self._bytes_received += len(data)
+                    continue
+
+                if isinstance(event, h11.Data):
+                    yield event.data
+                    continue
+
+                if isinstance(event, h11.EndOfMessage):
+                    break
+
+                if isinstance(event, h11.ConnectionClosed):
+                    raise ProtocolError("Connection closed by server")
+
+        return _iter_body()
     
     def _get_content_length(self, headers: list) -> Optional[int]:
         """

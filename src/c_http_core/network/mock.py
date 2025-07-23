@@ -75,8 +75,6 @@ class MockNetworkStream(NetworkStream):
             raise RuntimeError("Stream is closed")
         
         self._write_buffer.append(data)
-        # Add written data to the read buffer for testing
-        self._data += data
     
     async def aclose(self) -> None:
         """Close the mock stream."""
