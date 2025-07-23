@@ -35,6 +35,10 @@ class URLComponents(NamedTuple):
     @classmethod
     def from_url(cls, url: str) -> "URLComponents":
         """Create URLComponents from a URL string."""
+        # Handle URLs without scheme by adding http:// prefix
+        if not url.startswith(('http://', 'https://')):
+            url = 'http://' + url
+        
         parsed = urlparse(url)
         scheme = parsed.scheme.encode() if parsed.scheme else b"http"
         host = parsed.hostname.encode() if parsed.hostname else b""

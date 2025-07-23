@@ -25,11 +25,15 @@ from .utils import (
     is_localhost,
 )
 
-# Try to import epoll implementation
-try:
-    from .epoll import EpollEventLoop, EpollNetworkStream, EpollNetworkBackend
-    HAS_EPOLL = True
-except ImportError:
+# Try to import epoll implementation (Linux only)
+import sys
+if sys.platform.startswith("linux"):
+    try:
+        from .epoll import EpollEventLoop, EpollNetworkStream, EpollNetworkBackend
+        HAS_EPOLL = True
+    except ImportError:
+        HAS_EPOLL = False
+else:
     HAS_EPOLL = False
 
 __all__ = [

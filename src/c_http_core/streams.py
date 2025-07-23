@@ -32,7 +32,7 @@ class StreamInterface(ABC):
     """
     
     @abstractmethod
-    async def __aiter__(self) -> "StreamInterface":
+    def __aiter__(self) -> "StreamInterface":
         """Return self as async iterator."""
         pass
     
@@ -114,18 +114,22 @@ class RequestStream(StreamInterface):
         else:
             return self._data
     
-    async def _iter_bytes(self, data: bytes) -> AsyncIterable[bytes]:
+    def _iter_bytes(self, data: bytes) -> AsyncIterable[bytes]:
         """Iterate over bytes in chunks."""
-        if data:
-            yield data
+        async def _iter():
+            if data:
+                yield data
+        return _iter()
     
-    async def _iter_list(self, data: List[bytes]) -> AsyncIterable[bytes]:
+    def _iter_list(self, data: List[bytes]) -> AsyncIterable[bytes]:
         """Iterate over list of bytes."""
-        for chunk in data:
-            if chunk:  # Skip empty chunks
-                yield chunk
+        async def _iter():
+            for chunk in data:
+                if chunk:  # Skip empty chunks
+                    yield chunk
+        return _iter()
     
-    async def __aiter__(self) -> "RequestStream":
+    def __aiter__(self) -> "RequestStream":
         """Return self as async iterator."""
         if self._closed:
             raise StreamError("Cannot iterate over closed stream")
@@ -142,9 +146,12 @@ class RequestStream(StreamInterface):
             raise RuntimeError("Stream not initialized for iteration")
         
         try:
-            async for chunk in self._iterator:
-                return chunk
-            raise StopAsyncIteration
+            # Get the async iterator from the iterator
+            if not hasattr(self._iterator, '__aiter__'):
+                # If it's not an async iterator, make it one
+                self._iterator = self._iterator.__aiter__()
+            
+            return await self._iterator.__anext__()
         except StopAsyncIteration:
             raise
         except Exception as e:
@@ -214,21 +221,24 @@ class ResponseStream(StreamInterface):
         self._closed = False
         self._bytes_read = 0
         self._iterator: Optional[AsyncIterable[bytes]] = None
+        self._iterator_coro = None
         
         # Validate content_length if provided
         if content_length is not None and content_length < 0:
             raise ValueError("content_length must be non-negative")
     
-    def _get_iterator(self) -> AsyncIterable[bytes]:
+    async def _get_iterator(self) -> AsyncIterable[bytes]:
         """Get the iterator that reads from the connection."""
-        return self._connection._receive_body_chunk()
+        return await self._connection._receive_body_chunk()
     
-    async def __aiter__(self) -> "ResponseStream":
+    def __aiter__(self) -> "ResponseStream":
         """Return self as async iterator."""
         if self._closed:
             raise StreamError("Cannot iterate over closed stream")
         
-        self._iterator = self._get_iterator()
+        # Store the coroutine to await it in __anext__
+        self._iterator_coro = self._get_iterator()
+        self._iterator = None
         return self
     
     async def __anext__(self) -> bytes:
@@ -236,26 +246,39 @@ class ResponseStream(StreamInterface):
         if self._closed:
             raise StreamError("Cannot read from closed stream")
         
+        # Initialize iterator on first call
         if self._iterator is None:
-            raise RuntimeError("Stream not initialized for iteration")
+            if self._iterator_coro is None:
+                raise RuntimeError("Stream not initialized for iteration")
+            self._iterator = await self._iterator_coro
+            self._iterator_coro = None
         
         try:
-            async for chunk in self._iterator:
-                self._bytes_read += len(chunk)
-                
-                # Check content_length if provided
-                if (self._content_length is not None and 
-                    self._bytes_read > self._content_length):
-                    raise StreamError(
-                        f"Read more bytes ({self._bytes_read}) than "
-                        f"content_length ({self._content_length})"
-                    )
-                
-                return chunk
+            # Handle both regular iterators and async iterators
+            if hasattr(self._iterator, '__aiter__'):
+                # It's an async iterator
+                if not hasattr(self._iterator, '__anext__'):
+                    # Get the actual async iterator
+                    self._iterator = self._iterator.__aiter__()
+                chunk = await self._iterator.__anext__()
+            else:
+                # It's a regular iterator, convert to async
+                try:
+                    chunk = next(self._iterator)
+                except StopIteration:
+                    raise StopAsyncIteration
             
-            # Stream ended, notify connection
-            await self._connection._response_closed()
-            raise StopAsyncIteration
+            self._bytes_read += len(chunk)
+            
+            # Check content_length if provided
+            if (self._content_length is not None and 
+                self._bytes_read > self._content_length):
+                raise StreamError(
+                    f"Read more bytes ({self._bytes_read}) than "
+                    f"content_length ({self._content_length})"
+                )
+            
+            return chunk
             
         except StopAsyncIteration:
             # Stream ended, notify connection

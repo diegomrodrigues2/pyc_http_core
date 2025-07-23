@@ -529,13 +529,15 @@ class TestStreamErrorHandling:
                 pass
     
     @pytest.mark.asyncio
-    async def test_response_stream_error_during_iteration(self, mock_connection) -> None:
+    async def test_response_stream_error_during_iteration(self) -> None:
         """Test error handling during ResponseStream iteration."""
         async def error_generator():
             yield b"Hello"
             raise RuntimeError("Test error")
         
+        mock_connection = AsyncMock()
         mock_connection._receive_body_chunk.return_value = error_generator()
+        mock_connection._response_closed = AsyncMock()
         
         stream = ResponseStream(mock_connection)
         
