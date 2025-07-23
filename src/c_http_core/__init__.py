@@ -11,7 +11,16 @@ __email__ = "dev@example.com"
 
 # Import main components for easy access
 from .http_primitives import Request, Response
-from .exceptions import HTTPCoreError, ConnectionError, ProtocolError
+from .exceptions import HTTPCoreError, ConnectionError, ProtocolError, StreamError
+from .streams import (
+    RequestStream,
+    ResponseStream,
+    create_request_stream,
+    create_response_stream,
+    read_stream_to_bytes,
+    stream_to_list,
+    calculate_content_length,
+)
 
 __all__ = [
     "Request",
@@ -19,4 +28,12 @@ __all__ = [
     "HTTPCoreError",
     "ConnectionError",
     "ProtocolError",
+    "StreamError",
+    "RequestStream",
+    "ResponseStream",
+    "create_request_stream",
+    "create_response_stream",
+    "read_stream_to_bytes",
+    "stream_to_list",
+    "calculate_content_length",
 ] 
