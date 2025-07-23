@@ -100,6 +100,11 @@ class MockNetworkStream(NetworkStream):
         return self._closed
     
     @property
+    def closed(self) -> bool:
+        """Alias for is_closed for compatibility."""
+        return self._closed
+    
+    @property
     def written_data(self) -> bytes:
         """Get all data that was written to the stream."""
         return b"".join(self._write_buffer)
