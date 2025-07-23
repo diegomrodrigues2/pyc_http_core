@@ -78,4 +78,42 @@ def sample_response_data():
             (b"Location", b"/v1/data/123"),
             (b"Server", b"nginx/1.18.0"),
         ],
-    } 
+    }
+
+
+@pytest.fixture
+def sample_stream_data():
+    """Sample stream data for testing."""
+    return [
+        b"Hello",
+        b", ",
+        b"World",
+        b"!",
+    ]
+
+
+@pytest.fixture
+def sample_large_stream_data():
+    """Sample large stream data for testing."""
+    return [b"x" * 1024 for _ in range(100)]  # 100KB of data
+
+
+@pytest.fixture
+def mock_http11_connection():
+    """Create a mock HTTP11Connection for testing ResponseStream."""
+    from unittest.mock import AsyncMock
+    
+    connection = AsyncMock()
+    connection._receive_body_chunk.return_value = iter([b"Response", b" data"])
+    connection._response_closed = AsyncMock()
+    return connection
+
+
+@pytest.fixture
+def async_data_generator():
+    """Create an async data generator for testing."""
+    async def generator(data: List[bytes]):
+        for chunk in data:
+            yield chunk
+    
+    return generator 
