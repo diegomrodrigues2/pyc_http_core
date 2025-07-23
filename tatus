@@ -1,0 +1,4 @@
+[33m0d7dadb[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m)[m feat: Complete Phase 1 - HTTP primitives and comprehensive tests
+[33m45d0fac[m feat: Add HTTP primitives - Request and Response classes
+[33m291503f[m feat: Add custom exception hierarchy
+[33m6e90ecc[m feat: Initial project structure and configuration
