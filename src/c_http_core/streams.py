@@ -7,11 +7,12 @@ It implements backpressure natural where consumption drives reading from the net
 
 from abc import ABC, abstractmethod
 from typing import (
-    AsyncIterable, 
-    Optional, 
-    Union, 
-    List, 
-    Dict, 
+    AsyncIterable,
+    Iterable,
+    Optional,
+    Union,
+    List,
+    Dict,
     Any,
     TYPE_CHECKING,
 )
@@ -227,18 +228,23 @@ class ResponseStream(StreamInterface):
         if content_length is not None and content_length < 0:
             raise ValueError("content_length must be non-negative")
     
-    async def _get_iterator(self) -> AsyncIterable[bytes]:
+    def _get_iterator(self) -> AsyncIterable[bytes] | Iterable[bytes] | Any:
         """Get the iterator that reads from the connection."""
-        return await self._connection._receive_body_chunk()
+        return self._connection._receive_body_chunk()
     
     def __aiter__(self) -> "ResponseStream":
         """Return self as async iterator."""
         if self._closed:
             raise StreamError("Cannot iterate over closed stream")
         
-        # Store the coroutine to await it in __anext__
-        self._iterator_coro = self._get_iterator()
-        self._iterator = None
+        iterator = self._get_iterator()
+        if hasattr(iterator, "__await__"):
+            # _receive_body_chunk returned a coroutine/async generator
+            self._iterator_coro = iterator
+            self._iterator = None
+        else:
+            self._iterator = iterator
+            self._iterator_coro = None
         return self
     
     async def __anext__(self) -> bytes:
@@ -246,35 +252,40 @@ class ResponseStream(StreamInterface):
         if self._closed:
             raise StopAsyncIteration
         
+        # Initialize iterator on first call
+        if self._iterator is None:
+            if self._iterator_coro is None:
+                raise RuntimeError("Stream not initialized for iteration")
+            self._iterator = await self._iterator_coro
+            self._iterator_coro = None
+
         try:
-            # Get next chunk directly from connection
-            chunk = await self._connection._receive_body_chunk()
-            
-            if chunk is None:
-                # End of body reached
-                self._closed = True
-                await self._connection._response_closed()
-                raise StopAsyncIteration
-            
+            if hasattr(self._iterator, "__aiter__"):
+                if not hasattr(self._iterator, "__anext__"):
+                    self._iterator = self._iterator.__aiter__()
+                chunk = await self._iterator.__anext__()
+            else:
+                try:
+                    chunk = next(self._iterator)
+                except StopIteration:
+                    raise StopAsyncIteration
+
             self._bytes_read += len(chunk)
-            
-            # Check content_length if provided
-            if (self._content_length is not None and 
+
+            if (self._content_length is not None and
                 self._bytes_read > self._content_length):
                 raise StreamError(
                     f"Read more bytes ({self._bytes_read}) than "
                     f"content_length ({self._content_length})"
                 )
-            
+
             return chunk
-            
+
         except StopAsyncIteration:
-            # Stream ended, notify connection
             self._closed = True
             await self._connection._response_closed()
             raise
         except Exception as e:
-            # Error occurred, close connection
             self._closed = True
             await self._connection._response_closed()
             raise StreamError(f"Error reading from stream: {e}") from e

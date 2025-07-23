@@ -28,11 +28,14 @@ class TestMockNetworkStream:
         # Test write
         await stream.write(b"hello world")
         assert stream.written_data == b"hello world"
-        
+
+        # Add data manually for reading
+        stream.add_data(b"hello world")
+
         # Test read
         data = await stream.read(5)
         assert data == b"hello"
-        
+
         data = await stream.read()
         assert data == b" world"
     

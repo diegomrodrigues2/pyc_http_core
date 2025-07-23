@@ -15,7 +15,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from c_http_core.http11 import HTTP11Connection, ConnectionState
 from c_http_core.http_primitives import Request, Response
-from c_http_core.network import EpollNetworkBackend, HAS_EPOLL
+from c_http_core.network import HAS_EPOLL
+
+# Only import the epoll backend if it is actually available on this
+# platform.  Attempting to import it unconditionally causes an
+# ImportError on systems without epoll support and prevents the tests
+# from being collected.  The test class below is already marked with a
+# skip condition based on ``HAS_EPOLL`` so conditional importing here
+# keeps test collection working across platforms.
+if HAS_EPOLL:
+    from c_http_core.network import EpollNetworkBackend
 from c_http_core.streams import create_request_stream
 
 
