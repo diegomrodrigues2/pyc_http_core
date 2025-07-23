@@ -39,6 +39,8 @@ pip install -e ".[dev]"
 
 ## Quick Start
 
+### Basic Usage
+
 ```python
 import asyncio
 from c_http_core import Request, Response
@@ -54,15 +56,59 @@ request = Request.create(
 # response = await client.request(request)
 ```
 
+### Streaming Example
+
+```python
+import asyncio
+from c_http_core import (
+    Request, 
+    Response, 
+    create_request_stream,
+    create_response_stream
+)
+
+# Create a streaming request
+async def file_chunk_generator():
+    """Simulate reading a file in chunks."""
+    file_content = b"Hello, World!" * 1000  # Large file
+    chunk_size = 8192
+    for i in range(0, len(file_content), chunk_size):
+        yield file_content[i:i + chunk_size]
+
+# Create request with streaming body
+request_stream = create_request_stream(
+    file_chunk_generator(),
+    chunked=True
+)
+
+request = Request.create(
+    method="POST",
+    url="https://api.example.com/upload",
+    headers=[(b"Content-Type", b"application/octet-stream")],
+    stream=request_stream
+)
+
+# Process request stream with progress
+total_bytes = 0
+async for chunk in request_stream:
+    total_bytes += len(chunk)
+    print(f"Uploaded: {total_bytes} bytes")
+
+print(f"Total uploaded: {total_bytes} bytes")
+```
+
 ## Development Status
 
 This project is currently in **Alpha** development. The current implementation includes:
 
-### ✅ Completed (Phase 1)
+### ✅ Completed (Phase 1 & 2)
 - [x] Project structure and configuration
 - [x] Custom exception hierarchy
 - [x] HTTP primitives (Request, Response, URLComponents)
-- [x] Basic unit tests
+- [x] Streaming framework (RequestStream, ResponseStream)
+- [x] Factory functions and utility functions
+- [x] Comprehensive unit tests
+- [x] Examples and documentation
 
 ### 🚧 In Progress
 - [ ] Network backend interfaces
