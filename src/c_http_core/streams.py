@@ -244,29 +244,17 @@ class ResponseStream(StreamInterface):
     async def __anext__(self) -> bytes:
         """Get next chunk of data."""
         if self._closed:
-            raise StreamError("Cannot read from closed stream")
-        
-        # Initialize iterator on first call
-        if self._iterator is None:
-            if self._iterator_coro is None:
-                raise RuntimeError("Stream not initialized for iteration")
-            self._iterator = await self._iterator_coro
-            self._iterator_coro = None
+            raise StopAsyncIteration
         
         try:
-            # Handle both regular iterators and async iterators
-            if hasattr(self._iterator, '__aiter__'):
-                # It's an async iterator
-                if not hasattr(self._iterator, '__anext__'):
-                    # Get the actual async iterator
-                    self._iterator = self._iterator.__aiter__()
-                chunk = await self._iterator.__anext__()
-            else:
-                # It's a regular iterator, convert to async
-                try:
-                    chunk = next(self._iterator)
-                except StopIteration:
-                    raise StopAsyncIteration
+            # Get next chunk directly from connection
+            chunk = await self._connection._receive_body_chunk()
+            
+            if chunk is None:
+                # End of body reached
+                self._closed = True
+                await self._connection._response_closed()
+                raise StopAsyncIteration
             
             self._bytes_read += len(chunk)
             
@@ -282,10 +270,12 @@ class ResponseStream(StreamInterface):
             
         except StopAsyncIteration:
             # Stream ended, notify connection
+            self._closed = True
             await self._connection._response_closed()
             raise
         except Exception as e:
             # Error occurred, close connection
+            self._closed = True
             await self._connection._response_closed()
             raise StreamError(f"Error reading from stream: {e}") from e
     
