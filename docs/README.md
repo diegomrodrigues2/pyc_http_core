@@ -1,13 +1,13 @@
 # c_http_core
 
-High-performance HTTP transport library with HTTP/2 support, built with Cython and epoll for maximum performance.
+High-performance HTTP transport library with HTTP/2 support, built with a C epoll extension for maximum performance.
 
 ## Overview
 
 `c_http_core` is a high-performance HTTP transport library designed to provide the fastest possible HTTP client implementation. It features:
 
 - **Epoll-based event loop** for maximum I/O performance on Linux
-- **Cython implementation** for critical performance paths
+- **C extension** for critical performance paths
 - **HTTP/2 support** with ALPN negotiation
 - **TLS/SSL support** with modern cipher suites
 - **WebSocket support** for real-time communication
@@ -41,7 +41,7 @@ The library is built with a layered architecture:
 
 ### High Performance
 - **Epoll event loop** for efficient I/O multiplexing
-- **Cython implementation** for performance-critical code
+- **C extension** for performance-critical code
 - **Non-blocking I/O** throughout the stack
 - **Optimized memory usage** with minimal allocations
 
@@ -63,7 +63,7 @@ The library is built with a layered architecture:
 ### Prerequisites
 
 - Python 3.8 or higher
-- Cython 3.0 or higher (for epoll backend)
+- A C compiler (for the epoll extension)
 - Linux (for epoll support)
 
 ### Basic Installation
@@ -84,7 +84,7 @@ pip install -e .[dev]
 
 ```bash
 # Install build dependencies
-pip install Cython>=3.0 setuptools wheel
+pip install setuptools wheel
 
 # Build and install
 python setup.py build_ext --inplace
@@ -345,7 +345,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - Inspired by [httpcore](https://github.com/encode/httpcore) and [httpx](https://github.com/encode/httpx)
-- Built with [Cython](https://cython.org/) for performance
+- Built with a small C extension for performance
 - Uses [h11](https://github.com/python-hyper/h11) for HTTP/1.1 parsing
 - Uses [h2](https://github.com/python-hyper/h2) for HTTP/2 support
 

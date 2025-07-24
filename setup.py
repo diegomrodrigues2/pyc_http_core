@@ -1,8 +1,8 @@
 """
 Setup script for c_http_core.
 
-This script handles the compilation of Cython extensions and
-installation of the package.
+This script compiles the optional C extension providing an epoll
+interface used by the networking backend.
 """
 
 import os
@@ -10,51 +10,27 @@ import sys
 from setuptools import setup, Extension, find_packages
 from setuptools.command.build_ext import build_ext
 
-# Check if Cython is available
-try:
-    from Cython.Build import cythonize
-    from Cython.Distutils import build_ext as cython_build_ext
-    HAS_CYTHON = True
-except ImportError:
-    HAS_CYTHON = False
-    print("Warning: Cython not found. Epoll backend will not be compiled.")
-    print("Install Cython with: pip install Cython>=3.0")
-
 
 class CustomBuildExt(build_ext):
-    """Custom build extension that handles Cython compilation."""
-    
-    def build_extension(self, ext):
-        """Build a Cython extension."""
-        if HAS_CYTHON and ext.sources[0].endswith('.pyx'):
-            # Use Cython to compile
-            from Cython.Build import cythonize
-            cythonize([ext], compiler_directives={
-                'language_level': 3,
-                'boundscheck': False,
-                'wraparound': False,
-                'initializedcheck': False,
-                'cdivision': True,
-            })
-        super().build_extension(ext)
+    """Custom build extension with sane defaults."""
+    pass
 
 
 def get_extensions():
-    """Get list of Cython extensions to compile."""
-    if not HAS_CYTHON:
+    """Return list of C extensions to compile."""
+    if not sys.platform.startswith("linux"):
         return []
-    
+
     extensions = [
         Extension(
-            "c_http_core.network.epoll",
-            ["src/c_http_core/network/epoll.pyx"],
+            "c_http_core.network._cepoll",
+            ["src/c_http_core/network/_cepoll.c"],
             libraries=["c"],
             extra_compile_args=["-O3", "-Wall"],
             extra_link_args=["-O3"],
-            define_macros=[("CYTHON_TRACE", "0")],
         )
     ]
-    
+
     return extensions
 
 
@@ -112,13 +88,7 @@ def main():
         packages=find_packages(where="src"),
         package_dir={"": "src"},
         package_data=get_package_data(),
-        ext_modules=cythonize(extensions, compiler_directives={
-            'language_level': 3,
-            'boundscheck': False,
-            'wraparound': False,
-            'initializedcheck': False,
-            'cdivision': True,
-        }) if HAS_CYTHON and extensions else [],
+        ext_modules=extensions,
         cmdclass={
             'build_ext': CustomBuildExt,
         },
@@ -135,7 +105,6 @@ def main():
                 "mypy>=1.0.0",
                 "pre-commit>=2.20.0",
                 "pytest-cov>=4.0.0",
-                "Cython>=3.0",
             ],
             "test": [
                 "pytest>=7.0.0",
