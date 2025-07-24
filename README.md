@@ -124,7 +124,7 @@ This project is currently in **Alpha** development. The current implementation i
 
 ### 🚧 In Progress
 - [ ] Network backend interfaces
-- [ ] Epoll-based event loop (Cython)
+- [ ] Epoll-based event loop (C extension)
 - [ ] HTTP/1.1 connection implementation
 
 ### 📋 Planned
@@ -152,7 +152,7 @@ The library follows a modular design with clear separation of concerns:
 │  └─────────────────┘  └─────────────────┘  └─────────────┘ │
 │                              │                              │
 │  ┌─────────────────────────────────────────────────────────┐ │
-│  │              Network Backend (Cython)                   │ │
+│  │              Network Backend (C extension)              │ │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │ │
 │  │  │ EpollLoop   │  │NetworkStream│  │   TLS Support   │ │ │
 │  │  └─────────────┘  └─────────────┘  └─────────────────┘ │ │
@@ -199,4 +199,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Inspired by [httpcore](https://github.com/encode/httpcore) and [httpx](https://github.com/encode/httpx)
 - Built with [h11](https://github.com/python-hyper/h11) for HTTP/1.1 parsing
-- Uses [Cython](https://cython.org/) for high-performance networking
+- Uses a small C extension for high-performance networking
